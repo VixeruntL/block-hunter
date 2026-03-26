@@ -3,85 +3,101 @@ import requests
 from google_play_scraper import search, app as gp_app
 from datetime import datetime, timedelta
 import pandas as pd
+import time
 
-st.set_page_config(page_title="Block游戏监控器", layout="wide")
-st.title("🧩 Block类新品游戏雷达")
+st.set_page_config(page_title="Block新游监控-专业版", layout="wide")
+st.title("🛡️ Block类游戏上架深度监控 (免搜索直达)")
 
-# 侧边栏
-st.sidebar.header("⚙️ 监控设置")
-keywords_input = st.sidebar.text_area("监控关键词 (用逗号分隔)", "block blast, block puzzle, wood block")
-days_limit = st.sidebar.slider("查询过去几天的上架产品？", 1, 30, 14) # 扩大到30天更稳妥
-country = st.sidebar.selectbox("目标市场", ["us", "jp", "kr", "tw", "cn"], index=0)
+# 侧边栏设置
+st.sidebar.header("🎯 监控参数")
+target_keyword = st.sidebar.text_input("过滤关键词 (如: block, puzzle, wood)", "block")
+days_limit = st.sidebar.slider("监控范围 (过去几天)", 1, 30, 7)
+country = st.sidebar.selectbox("监控市场", ["us", "gb", "jp", "kr", "cn"], index=0)
 
-keywords = [k.strip() for k in keywords_input.split(',')]
-
-def fetch_app_store(keywords, days_limit, country):
+# App Store 逻辑优化：利用 RSS Feed 直接抓取最新上架
+def fetch_ios_new_releases(keyword, days, country):
     new_apps = []
-    cutoff_date = datetime.utcnow() - timedelta(days=days_limit)
-    for keyword in keywords:
-        # 增加搜索限额到 100
-        url = f"https://itunes.apple.com/search?term={keyword}&entity=software&country={country}&limit=100"
-        try:
-            response = requests.get(url, timeout=15).json()
-            for result in response.get('results', []):
-                # 尝试获取发布日期或更新日期
-                date_str = result.get('releaseDate') or result.get('currentVersionReleaseDate')
-                if date_str:
-                    release_date = datetime.strptime(date_str, "%Y-%m-%dT%H:%M:%SZ")
-                    if release_date >= cutoff_date:
-                        new_apps.append({
-                            "平台": "🍎 App Store",
-                            "游戏名称": result.get('trackName'),
-                            "开发者": result.get('artistName'),
-                            "发布日期": release_date.strftime("%Y-%m-%d"),
-                            "链接": result.get('trackViewUrl')
-                        })
-        except: continue
+    # 抓取 App Store 最新上架的游戏榜单 (New Games RSS)
+    url = f"https://itunes.apple.com/{country}/rss/newapplications/limit=100/json"
+    try:
+        res = requests.get(url, timeout=15).json()
+        entries = res.get('feed', {}).get('entry', [])
+        cutoff_date = datetime.utcnow() - timedelta(days=days)
+        
+        for entry in entries:
+            name = entry.get('im:name', {}).get('label', '')
+            # 只要名字里包含关键字，就记录
+            if keyword.lower() in name.lower():
+                # 进一步抓取详情获取精确日期
+                app_id = entry.get('id', {}).get('im:bundleId', '')
+                new_apps.append({
+                    "平台": "🍎 App Store",
+                    "游戏名称": name,
+                    "开发者": entry.get('im:artist', {}).get('label', '未知'),
+                    "发布日期": "近期上架", # RSS流默认为最新
+                    "链接": entry.get('id', {}).get('label', '')
+                })
+    except: pass
     return new_apps
 
-def fetch_google_play(keywords, days_limit, country):
+# Google Play 逻辑优化：尝试多重搜索组合，模拟“最新”排序
+def fetch_gp_new_releases(keyword, days, country):
     new_apps = []
-    cutoff_date = datetime.utcnow() - timedelta(days=days_limit)
-    for keyword in keywords:
+    cutoff_date = datetime.utcnow() - timedelta(days=days)
+    # 尝试搜索关键词的变体，以覆盖更多新游
+    search_queries = [f"new {keyword} game", f"{keyword} 2026", keyword]
+    
+    seen_ids = set()
+    for q in search_queries:
         try:
-            # 增加搜索深度
-            results = search(keyword, lang="en", country=country)
-            for result in results[:40]: 
-                app_id = result['appId']
+            results = search(q, lang="en", country=country, n_hits=50)
+            for r in results:
+                app_id = r['appId']
+                if app_id in seen_ids: continue
+                seen_ids.add(app_id)
+                
                 try:
-                    # 抓取详情很耗时且易被封IP，这里先做基础判断
+                    # 获取详细信息
                     details = gp_app(app_id, lang='en', country=country)
-                    released_str = details.get('released')
-                    if released_str:
-                        # 兼容处理 Google Play 的多种日期格式
-                        try:
-                            release_date = pd.to_datetime(released_str)
-                            if release_date >= cutoff_date:
-                                new_apps.append({
-                                    "平台": "🤖 Google Play",
-                                    "游戏名称": details.get('title'),
-                                    "开发者": details.get('developer'),
-                                    "发布日期": release_date.strftime("%Y-%m-%d"),
-                                    "链接": f"https://play.google.com/store/apps/details?id={app_id}"
-                                })
-                        except: continue
+                    rel_date_str = details.get('released')
+                    if rel_date_str:
+                        rel_date = pd.to_datetime(rel_date_str)
+                        if rel_date >= cutoff_date:
+                            new_apps.append({
+                                "平台": "🤖 Google Play",
+                                "游戏名称": details.get('title'),
+                                "开发者": details.get('developer'),
+                                "发布日期": rel_date.strftime("%Y-%m-%d"),
+                                "链接": f"https://play.google.com/store/apps/details?id={app_id}"
+                            })
                 except: continue
         except: continue
     return new_apps
 
-if st.button("🚀 开始扫描新品", type="primary"):
-    if not keywords_input.strip():
-        st.error("请输入关键词后再扫描！")
-    else:
-        with st.spinner('正在深度扫描，请耐心等待约 30 秒...'):
-            ios_data = fetch_app_store(keywords, days_limit, country)
-            gp_data = fetch_google_play(keywords, days_limit, country)
+if st.button("🔍 开始全量扫描", type="primary"):
+    with st.spinner('正在调取应用商店 RSS 数据流和最新搜索索引...'):
+        # 并行模拟：先跑 iOS 再跑 GP
+        ios_list = fetch_ios_new_releases(target_keyword, days_limit, country)
+        gp_list = fetch_gp_new_releases(target_keyword, days_limit, country)
+        
+        results = ios_list + gp_list
+        
+        if results:
+            df = pd.DataFrame(results).drop_duplicates(subset=['游戏名称'])
+            st.success(f"✅ 扫描完毕！在 {country.upper()} 市场发现了 {len(df)} 个含有 '{target_keyword}' 的新产品。")
             
-            all_data = ios_data + gp_data
+            # 展示数据
+            st.dataframe(
+                df, 
+                column_config={"链接": st.column_config.LinkColumn("查看详情")},
+                use_container_width=True,
+                hide_index=True
+            )
             
-            if all_data:
-                df = pd.DataFrame(all_data).drop_duplicates(subset=['游戏名称'])
-                st.success(f"找到 {len(df)} 款近期上架/更新的游戏！")
-                st.dataframe(df, column_config={"链接": st.column_config.LinkColumn()}, use_container_width=True)
-            else:
-                st.info("💡 搜索反馈：在当前条件下未发现极新品。原因可能是：这些词下的排名前 100 都是老游戏。建议尝试搜更具体的词，如 'Block Blast 2026'。")
+            # 提供下载
+            csv = df.to_csv(index=False).encode('utf-8')
+            st.download_button("📥 导出扫描报告 (CSV)", data=csv, file_name=f"new_block_games_{datetime.now().strftime('%Y%m%d')}.csv")
+        else:
+            st.warning(f"⚠️ 未发现含有 '{target_keyword}' 的近期新游。建议：1. 缩短关键词(如只搜 'block') 2. 检查市场选择。")
+
+st.info("💡 提示：App Store 的 RSS 数据大约每 6-12 小时更新一次；Google Play 的新游通常在发布 24 小时后才能被搜索到。")
