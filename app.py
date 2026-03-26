@@ -75,4 +75,52 @@ def fetch_gp(mode, kw, cc, n):
             "应用名称": item.get('title'), 
             "开发者": item.get('developer'), 
             "评分": item.get('score'), 
-            "链接": f"
+            "链接": f"https://play.google.com/store/apps/details?id={item.get('appId')}"
+        } for i, item in enumerate(res)]
+    except:
+        return []
+
+# --- 渲染配置 ---
+# 定义表格的列配置，让链接可点击
+column_cfg = {
+    "链接": st.column_config.LinkColumn(
+        "应用详情",
+        display_text="点击打开网页" # 表格里显示的文字
+    )
+}
+
+# --- 执行区 ---
+
+if st.button("🚀 开始检索数据", type="primary"):
+    st.subheader(f"📍 当前模式：{mode} ({country.upper()})")
+    
+    t1, t2 = st.tabs(["🍎 iOS (App Store)", "🤖 Android (Google Play)"])
+    
+    with st.spinner('正在同步全球数据，请稍候...'):
+        ios_data = fetch_ios(mode, target_kw, country, limit)
+        gp_data = fetch_gp(mode, target_kw, country, limit)
+        
+        with t1:
+            if ios_data:
+                df_ios = pd.DataFrame(ios_data)
+                if mode != "关键词搜索排名":
+                    df_ios = df_ios[df_ios['应用名称'].str.contains(target_kw, case=False, na=False)]
+                
+                # 使用 column_config 渲染链接
+                st.dataframe(df_ios, use_container_width=True, hide_index=True, column_config=column_cfg)
+                st.download_button("下载 iOS 报表", df_ios.to_csv(index=False).encode('utf-8-sig'), "ios_data.csv")
+            else:
+                st.info("在该模式下未找到匹配的 iOS 应用。")
+
+        with t2:
+            if gp_data:
+                df_gp = pd.DataFrame(gp_data)
+                # 使用 column_config 渲染链接
+                st.dataframe(df_gp, use_container_width=True, hide_index=True, column_config=column_cfg)
+                st.download_button("下载 Android 报表", df_gp.to_csv(index=False).encode('utf-8-sig'), "gp_data.csv")
+            else:
+                st.info("未找到匹配的 Android 应用。")
+
+st.divider()
+# 之前报错的 121 行已修复：
+st.caption("提示：iOS 的畅销榜和下载榜是实时 RSS 数据；Android 端目前通过搜索算法模拟相关排名。")
