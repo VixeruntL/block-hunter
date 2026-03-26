@@ -118,4 +118,4 @@ if st.button("🚀 开始检索数据", type="primary"):
                 st.info("未找到匹配的 Android 应用。")
 
 st.divider()
-st.caption("提示：iOS 的畅销榜和
+st.caption("提示：iOS 的畅销榜和下载榜是实时 RSS 数据；Android 端目前通过搜索算法模拟相关排名。")
